@@ -1,7 +1,7 @@
 {
   "domain": "mast_water",
   "name": "MAST Water Meter",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "documentation": "https://github.com/leranp/HomeAssistant-Mast-Water-Meter",
   "issue_tracker": "https://github.com/leranp/HomeAssistant-Mast-Water-Meter/issues",
   "dependencies": ["recorder"],

@@ -159,6 +159,22 @@ class MastWaterCoordinator(DataUpdateCoordinator[MastWaterData]):
                 "[COORD] Fetch succeeded — jwt_prefix=%s...",
                 self.client.jwt_token[:20] if self.client.jwt_token else "(empty)",
             )
+
+            # Cancel any stale re-auth flow that may have been opened during a
+            # previous failed fetch — the token is now working again.
+            active_flows = self.hass.config_entries.flow.async_progress_by_handler(DOMAIN)
+            for flow in active_flows:
+                ctx = flow.get("context", {})
+                if (
+                    ctx.get("source") == SOURCE_REAUTH
+                    and ctx.get("entry_id") == self._entry.entry_id
+                ):
+                    _LOGGER.debug(
+                        "[COORD] Aborting stale re-auth flow %s — fetch succeeded",
+                        flow["flow_id"],
+                    )
+                    await self.hass.config_entries.flow.async_abort(flow["flow_id"])
+
             return MastWaterData(
                 water_cards=water_cards,
                 daily_readings=daily_readings,

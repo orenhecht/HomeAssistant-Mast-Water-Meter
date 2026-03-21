@@ -1,12 +1,16 @@
 """MAST Water API client."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Callable
 
 import aiohttp
 
 from .const import API_BASE_URL, API_REFERER
+
+_MAX_RETRIES = 3
+_RETRY_DELAY = 3  # seconds between retries
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -71,20 +75,32 @@ class MastWaterApiClient:
         if response.status != 200:
             raise MastApiError(f"API {path} returned status {response.status}: {body[:200]}")
 
-    async def _get(self, path: str) -> Any:
+    async def _revalidate_session(self) -> None:
+        """Call ValidateUserAssets without retry to reactivate server-side session."""
+        try:
+            await self._get("PersonalAreaAsset/ValidateUserAssets", _retries=0)
+        except MastApiError as err:
+            _LOGGER.warning("[API] Session revalidation failed: %s", err)
+
+    async def _get(self, path: str, _retries: int = _MAX_RETRIES) -> Any:
         url = f"{API_BASE_URL}/{path}"
-        _LOGGER.debug("[API] GET %s — jwt_prefix=%s...", path, self.jwt_token[:20] if self.jwt_token else "(empty)")
+        _LOGGER.debug("[API] GET %s — jwt[39:80]=%s...", path, self.jwt_token[39:80] if self.jwt_token else "(empty)")
         try:
             async with self._session.get(url, headers=self._headers(), timeout=aiohttp.ClientTimeout(total=30)) as response:
                 _LOGGER.debug("[API] GET %s → status=%d", path, response.status)
                 self._handle_new_token(response)
                 body = await response.text()
+                if response.status == 401 and _retries > 0:
+                    _LOGGER.warning("[API] GET %s → 401, revalidating session and retrying (%d retries left)", path, _retries)
+                    await asyncio.sleep(_RETRY_DELAY)
+                    await self._revalidate_session()
+                    return await self._get(path, _retries=_retries - 1)
                 self._check_status(response, path, body)
                 return await response.json(content_type=None) if body else None
         except aiohttp.ClientError as err:
             raise MastApiError(f"Network error calling {path}: {err}") from err
 
-    async def _post(self, path: str, payload: dict) -> Any:
+    async def _post(self, path: str, payload: dict, _retries: int = _MAX_RETRIES) -> Any:
         url = f"{API_BASE_URL}/{path}"
         _LOGGER.debug("[API] POST %s payload=%s", path, payload)
         try:
@@ -92,6 +108,11 @@ class MastWaterApiClient:
                 _LOGGER.debug("[API] POST %s → status=%d", path, response.status)
                 self._handle_new_token(response)
                 body = await response.text()
+                if response.status == 401 and _retries > 0:
+                    _LOGGER.warning("[API] POST %s → 401, revalidating session and retrying (%d retries left)", path, _retries)
+                    await asyncio.sleep(_RETRY_DELAY)
+                    await self._revalidate_session()
+                    return await self._post(path, payload, _retries=_retries - 1)
                 self._check_status(response, path, body)
                 import json as _json
                 return _json.loads(body) if body else None
