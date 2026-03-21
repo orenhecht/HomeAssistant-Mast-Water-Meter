@@ -1,0 +1,59 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "MAST Water Meter — Setup",
+        "description": "Enter the phone number registered with your MAST account. An SMS with a verification code will be sent to you. Alternatively, paste a JWT token directly to skip OTP.",
+        "data": {
+          "phone": "Phone number (mobile)",
+          "company_id": "Company ID (default: 7)",
+          "scan_interval": "Update interval in seconds (min 300)",
+          "jwt_token": "JWT token (optional — skips OTP)"
+        }
+      },
+      "otp": {
+        "title": "Verification Code",
+        "description": "An SMS was sent to {secured_phone}. Enter the 6-digit code.",
+        "data": {
+          "otp_code": "Verification code"
+        }
+      },
+      "reauth_phone": {
+        "title": "MAST — Re-authenticate",
+        "description": "Your login token has expired. Re-verify with your phone number, or paste a new JWT token directly.",
+        "data": {
+          "phone": "Phone number (mobile)",
+          "jwt_token": "JWT token (optional — skips OTP)"
+        }
+      },
+      "reauth_otp": {
+        "title": "Verification Code — Re-authentication",
+        "description": "An SMS was sent to {secured_phone}. Enter the code.",
+        "data": {
+          "otp_code": "Verification code"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Failed to send SMS — check that the phone number is registered with your MAST account.",
+      "invalid_otp": "Incorrect or expired verification code. Please try again.",
+      "cannot_connect": "Cannot connect. Check your internet connection.",
+      "unknown": "Unexpected error. Check the Home Assistant logs.",
+      "phone_required": "Phone number is required when not providing a manual JWT token."
+    },
+    "abort": {
+      "already_configured": "MAST Water Meter is already configured.",
+      "reauth_successful": "Re-authentication successful."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "MAST Water Meter Settings",
+        "data": {
+          "scan_interval": "Update interval in seconds (min 300)"
+        }
+      }
+    }
+  }
+}
