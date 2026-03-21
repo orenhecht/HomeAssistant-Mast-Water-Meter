@@ -1,6 +1,7 @@
 # MAST Water Meter — Home Assistant Integration
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
+[![Validate](https://github.com/leranp/mast-water-ha/actions/workflows/validate.yaml/badge.svg)](https://github.com/leranp/mast-water-ha/actions/workflows/validate.yaml)
 
 אינטגרציה לHome Assistant לקריאת נתוני מונה מים מחברת [מאסט](https://www.mast.co.il/).
 

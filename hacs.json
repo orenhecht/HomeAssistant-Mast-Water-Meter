@@ -1,6 +1,6 @@
 {
   "name": "MAST Water Meter",
-  "content_in_root": false,
+  "country": "IL",
   "render_readme": true,
   "homeassistant": "2023.1.0"
 }
