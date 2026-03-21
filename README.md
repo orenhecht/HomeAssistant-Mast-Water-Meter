@@ -5,50 +5,50 @@
 
 <img src="logo.png" alt="MAST Logo" width="120"/>
 
-אינטגרציה לHome Assistant לקריאת נתוני מונה מים מחברת [מאסט](https://www.mast.co.il/).
+Home Assistant integration for reading water meter data from [MAST](https://www.mast.co.il/) (Israeli water company).
 
-## תכונות
+## Features
 
-- **קריאה נוכחית** — קריאת המד המצטברת (m³), תואמת ל-Energy Dashboard
-- **צריכה יומית** — צריכה ביום האחרון (m³)
-- **היסטוריה** — שנה שלמה של נתונים יומיים מוזרקת אוטומטית ל-Energy Dashboard בטעינה הראשונה
-- **ריענון אוטומטי** של הsession לפני כל קריאת נתונים
-- **Re-auth אוטומטי** — כשהטוקן פג, HA מציג התראה לאימות מחדש
+- **Current Reading** — cumulative meter value (m³), compatible with the Energy Dashboard
+- **Daily Usage** — consumption on the most recent available day (m³)
+- **Full History** — one year of daily readings is injected into the Energy Dashboard on first load
+- **Automatic session refresh** before every data fetch
+- **Auto re-auth** — when the token expires, HA prompts for re-authentication
 
-## התקנה דרך HACS
+## Installation via HACS
 
-### שיטה 1 — לחיצה אחת
+### Method 1 — One click
 
-[![פתח ב-Home Assistant](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=leranp&repository=HomeAssistant-Mast-Water-Meter&category=integration)
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=leranp&repository=HomeAssistant-Mast-Water-Meter&category=integration)
 
-### שיטה 2 — ידנית
+### Method 2 — Manual
 
-1. פתח **HACS** ב-Home Assistant
-2. לחץ על שלוש הנקודות (⋮) בפינה הימנית העליונה → **Custom repositories**
-3. הכנס את הכתובת:
+1. Open **HACS** in Home Assistant
+2. Click the three-dot menu (⋮) → **Custom repositories**
+3. Enter the repository URL:
    ```
    https://github.com/leranp/HomeAssistant-Mast-Water-Meter
    ```
-4. בחר קטגוריה: **Integration** → לחץ **Add**
-5. חפש **MAST Water Meter** → **Download**
-6. הפעל מחדש את Home Assistant
+4. Select category: **Integration** → click **Add**
+5. Search for **MAST Water Meter** → **Download**
+6. Restart Home Assistant
 
-## הגדרה
+## Configuration
 
-1. עבור לـ **Settings → Devices & Services → Add Integration**
-2. חפש **MAST Water Meter**
-3. הכנס מספר טלפון → קבל SMS עם קוד OTP → הכנס קוד
+1. Go to **Settings → Devices & Services → Add Integration**
+2. Search for **MAST Water Meter**
+3. Enter your phone number → receive an SMS with an OTP → enter the code
 
-**לחלופין** — ניתן להכניס JWT token ידנית (דלג על OTP):
-- השג טוקן מהדפדפן (Network tab ← `jwt` header)
-- הכנס בשדה "טוקן JWT ידני"
+**Alternative** — enter a JWT token manually (skip OTP):
+- Obtain a token from the browser (Network tab → `jwt` header)
+- Paste it into the "Manual JWT token" field
 
 ## Energy Dashboard
 
-לאחר הגדרה, עבור לـ **Settings → Energy → Water consumption → Add water source** ובחר:
-- `mast_water:<מספר_מונה>` — להיסטוריה מלאה (מומלץ)
+After setup, go to **Settings → Energy → Water consumption → Add water source** and select:
+- `mast_water:<meter_number>` — full historical data (recommended)
 
-## דרישות
+## Requirements
 
-- Home Assistant 2023.1.0 ומעלה
-- חשבון פעיל במאסט עם מונה מים חכם
+- Home Assistant 2023.1.0 or later
+- An active MAST account with a smart water meter
