@@ -3,6 +3,8 @@
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
 [![Validate](https://github.com/leranp/HomeAssistant-Mast-Water-Meter/actions/workflows/validate.yaml/badge.svg)](https://github.com/leranp/HomeAssistant-Mast-Water-Meter/actions/workflows/validate.yaml)
 
+<img src="logo.png" alt="MAST Logo" width="120"/>
+
 אינטגרציה לHome Assistant לקריאת נתוני מונה מים מחברת [מאסט](https://www.mast.co.il/).
 
 ## תכונות
@@ -15,11 +17,21 @@
 
 ## התקנה דרך HACS
 
-1. פתח HACS ב-Home Assistant
-2. עבור לـ **Integrations** → תפריט שלוש הנקודות → **Custom repositories**
-3. הכנס את כתובת הrepo ובחר **Integration**
-4. חפש **MAST Water Meter** והתקן
-5. הפעל מחדש את Home Assistant
+### שיטה 1 — לחיצה אחת
+
+[![פתח ב-Home Assistant](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=leranp&repository=HomeAssistant-Mast-Water-Meter&category=integration)
+
+### שיטה 2 — ידנית
+
+1. פתח **HACS** ב-Home Assistant
+2. לחץ על שלוש הנקודות (⋮) בפינה הימנית העליונה → **Custom repositories**
+3. הכנס את הכתובת:
+   ```
+   https://github.com/leranp/HomeAssistant-Mast-Water-Meter
+   ```
+4. בחר קטגוריה: **Integration** → לחץ **Add**
+5. חפש **MAST Water Meter** → **Download**
+6. הפעל מחדש את Home Assistant
 
 ## הגדרה
 
