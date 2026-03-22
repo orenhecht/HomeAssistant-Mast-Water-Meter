@@ -135,20 +135,19 @@ async def send_login_otp(phone: str, company_id: str = "7") -> str:
 def _pick_api_company_id(companies: list, auth_company_id: str) -> str:
     """Pick the data-API company ID from the userCompanies list.
 
-    Users may belong to multiple companies (e.g. water utility + regional council).
-    The portal/auth company (e.g. "7") is used for OTP; the data API often requires
-    a different company (e.g. "76").  Strategy: prefer a valid, active company whose
-    ID is *not* the auth portal company; fall back to the auth company if it's the
-    only valid one.
+    The auth company (e.g. "7", the water utility) is the correct one for data API
+    calls.  We prefer it when it appears as valid/active in the company list.
+    Other companies (e.g. regional councils) should not be used for meter data.
     """
     valid = [
         c for c in companies
         if c.get("validAsset") and c.get("isActiveCompany")
     ] or companies  # fall back to all if filter leaves nothing
 
-    non_auth = [c for c in valid if str(c.get("companyId", "")) != str(auth_company_id)]
-    candidates = non_auth if non_auth else valid
-    return str(candidates[-1].get("companyId", auth_company_id))
+    auth_match = [c for c in valid if str(c.get("companyId", "")) == str(auth_company_id)]
+    if auth_match:
+        return auth_company_id
+    return str(valid[0].get("companyId", auth_company_id))
 
 
 async def _validate_otp_once(
@@ -217,41 +216,33 @@ async def validate_login_otp(
     Raises MastAuthError on wrong OTP, MastNetworkError on connectivity issues.
     """
     async with aiohttp.ClientSession() as session:
-        if api_company_id and api_company_id != company_id:
-            # Re-auth (or caller already knows api_company_id): validate directly
-            # with the data-API company so the JWT is scoped correctly.
-            _LOGGER.debug(
-                "[AUTH] Validating OTP with api_company_id=%s (auth=%s)",
-                api_company_id,
-                company_id,
-            )
-            token, body = await _validate_otp_once(session, phone, otp_code, api_company_id)
-            companies = body.get("user", {}).get("userCompanies", [])
-            result_api_company_id = _pick_api_company_id(companies, auth_company_id=company_id)
-        else:
-            # Initial setup: validate with auth company first to discover api_company_id.
-            token, body = await _validate_otp_once(session, phone, otp_code, company_id)
-            companies = body.get("user", {}).get("userCompanies", [])
-            discovered = _pick_api_company_id(companies, auth_company_id=company_id)
+        # Always validate with the auth company first — it is the water utility and
+        # the correct company for data API calls.  Do NOT validate with api_company_id
+        # directly (regional councils, etc. return 401 for meter endpoints).
+        token, body = await _validate_otp_once(session, phone, otp_code, company_id)
+        companies = body.get("user", {}).get("userCompanies", [])
+        result_api_company_id = _pick_api_company_id(companies, auth_company_id=company_id)
 
-            if discovered != company_id:
-                # Two-step: validate again with the data-API company to get a
-                # properly-scoped JWT.  The OTP may be reusable; if not, fall back.
-                _LOGGER.debug(
-                    "[AUTH] Discovered api_company_id=%s; re-validating OTP with that company",
-                    discovered,
+        if result_api_company_id != company_id:
+            # Unexpected: the picker chose a different company.  Try two-step OTP
+            # in case the data API truly needs a different scope; if it fails
+            # (OTP is single-use), fall back to the auth-company JWT and use
+            # company_id for data API calls.
+            _LOGGER.debug(
+                "[AUTH] Discovered api_company_id=%s; re-validating OTP with that company",
+                result_api_company_id,
+            )
+            try:
+                token, body = await _validate_otp_once(session, phone, otp_code, result_api_company_id)
+                _LOGGER.debug("[AUTH] Two-step OTP validation succeeded")
+            except MastAuthError as err:
+                _LOGGER.warning(
+                    "[AUTH] Two-step OTP re-validation failed (%s) — "
+                    "falling back to JWT from companyId=%s",
+                    err,
+                    company_id,
                 )
-                try:
-                    token, body = await _validate_otp_once(session, phone, otp_code, discovered)
-                    _LOGGER.debug("[AUTH] Two-step OTP validation succeeded")
-                except MastAuthError as err:
-                    _LOGGER.warning(
-                        "[AUTH] Two-step OTP re-validation failed (%s) — "
-                        "falling back to JWT from companyId=%s",
-                        err,
-                        company_id,
-                    )
-            result_api_company_id = discovered
+                result_api_company_id = company_id
 
     _LOGGER.debug(
         "[AUTH] JWT ready — len=%d payload_start=%s... api_company_id=%s",
