@@ -6,7 +6,7 @@
         "description": "Enter the phone number registered with your MAST account. An SMS with a verification code will be sent to you. Alternatively, paste a JWT token directly to skip OTP.",
         "data": {
           "phone": "Phone number (mobile)",
-          "company_id": "Company ID (default: 7)",
+          "company_id": "Water utility / authority (search by name or town)",
           "scan_interval": "Update interval in seconds (min 300)",
           "jwt_token": "JWT token (optional — skips OTP)"
         }
@@ -39,7 +39,9 @@
       "invalid_otp": "Incorrect or expired verification code. Please try again.",
       "cannot_connect": "Cannot connect. Check your internet connection.",
       "unknown": "Unexpected error. Check the Home Assistant logs.",
-      "phone_required": "Phone number is required when not providing a manual JWT token."
+      "phone_required": "Phone number is required when not providing a manual JWT token.",
+      "company_switched": "Code accepted, but your account belongs to a different company. A new code was sent — enter it.",
+      "no_meter_access": "Code accepted, but no company on your account grants meter-data access. Check the Home Assistant logs."
     },
     "abort": {
       "already_configured": "MAST Water Meter is already configured.",
@@ -51,7 +53,8 @@
       "init": {
         "title": "MAST Water Meter Settings",
         "data": {
-          "scan_interval": "Update interval in seconds (min 300)"
+          "scan_interval": "Update interval in seconds (min 300)",
+          "company_id": "Water utility / authority (search by name or town)"
         }
       }
     }

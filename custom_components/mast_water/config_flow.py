@@ -17,8 +17,20 @@ import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.core import callback
+from homeassistant.helpers.selector import (
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
+)
 
-from .auth import MastAuthError, MastNetworkError, send_login_otp, validate_login_otp
+from .auth import (
+    MastAuthError,
+    MastNetworkError,
+    MastWrongCompanyError,
+    fetch_companies,
+    send_login_otp,
+    validate_login_otp,
+)
 from .const import (
     CONF_API_COMPANY_ID,
     CONF_COMPANY_ID,
@@ -32,6 +44,29 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# MAST organization list, fetched once per HA run for the company dropdown
+_company_options: list[dict[str, str]] | None = None
+
+
+async def _company_field() -> Any:
+    """Searchable dropdown of MAST organizations; plain text if the list is unavailable."""
+    global _company_options
+    if _company_options is None:
+        try:
+            _company_options = await fetch_companies()
+        except MastNetworkError as err:
+            _LOGGER.warning("Could not load MAST company list, falling back to text field: %s", err)
+            return str
+    if not _company_options:
+        return str
+    return SelectSelector(
+        SelectSelectorConfig(
+            options=_company_options,
+            mode=SelectSelectorMode.DROPDOWN,
+            custom_value=True,  # still allows typing an ID that is not listed
+        )
+    )
+
 
 class MastWaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle setup and re-authentication."""
@@ -44,6 +79,26 @@ class MastWaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._api_company_id: str = ""  # data-API company (e.g. "76"); empty = not yet known
         self._scan_interval: int = DEFAULT_SCAN_INTERVAL
         self._secured_phone: str = ""
+        self._tried_company_ids: set[str] = set()
+
+    async def _switch_company_and_resend(self, err: MastWrongCompanyError) -> str:
+        """Log in again under the account's own company; return an error key."""
+        self._tried_company_ids.add(self._company_id)
+        if err.suggested_company_id in self._tried_company_ids:
+            _LOGGER.warning("[FLOW] %s — no company left to try", err)
+            return "no_meter_access"
+        _LOGGER.warning(
+            "[FLOW] %s — switching login company %s → %s and resending OTP",
+            err, self._company_id, err.suggested_company_id,
+        )
+        self._company_id = err.suggested_company_id
+        try:
+            self._secured_phone = await send_login_otp(self._phone, self._company_id)
+        except MastNetworkError:
+            return "cannot_connect"
+        except MastAuthError:
+            return "invalid_auth"
+        return "company_switched"
 
     # ------------------------------------------------------------------
     # Initial setup — Step 1: phone number
@@ -97,7 +152,7 @@ class MastWaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema(
                 {
                     vol.Optional(CONF_PHONE, default=""): str,
-                    vol.Optional(CONF_COMPANY_ID, default=DEFAULT_COMPANY_ID): str,
+                    vol.Optional(CONF_COMPANY_ID, default=self._company_id): await _company_field(),
                     vol.Optional(CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL): vol.All(
                         int, vol.Range(min=300)
                     ),
@@ -120,6 +175,8 @@ class MastWaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             otp = user_input["otp_code"].strip()
             try:
                 jwt_token, api_company_id = await validate_login_otp(self._phone, otp, self._company_id)
+            except MastWrongCompanyError as err:
+                errors["base"] = await self._switch_company_and_resend(err)
             except MastAuthError as err:
                 _LOGGER.warning("MAST OTP validation failed: %s", err)
                 errors["base"] = "invalid_otp"
@@ -246,6 +303,8 @@ class MastWaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     self._phone, otp, self._company_id,
                     api_company_id=self._api_company_id or None,
                 )
+            except MastWrongCompanyError as err:
+                errors["base"] = await self._switch_company_and_resend(err)
             except MastAuthError as err:
                 _LOGGER.warning("[FLOW] reauth_otp: OTP validation failed: %s", err)
                 errors["base"] = "invalid_otp"
@@ -302,6 +361,7 @@ class MastWaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         data={
                             **reauth_entry.data,
                             CONF_PHONE: self._phone,
+                            CONF_COMPANY_ID: self._company_id,
                             CONF_JWT_TOKEN: jwt_token,
                             CONF_API_COMPANY_ID: api_company_id,
                         },
@@ -376,7 +436,7 @@ class MastWaterOptionsFlow(config_entries.OptionsFlow):
             step_id="init",
             data_schema=vol.Schema(
                 {
-                    vol.Optional(CONF_COMPANY_ID, default=current_company_id): str,
+                    vol.Optional(CONF_COMPANY_ID, default=current_company_id): await _company_field(),
                     vol.Optional(CONF_SCAN_INTERVAL, default=current_interval): vol.All(
                         int, vol.Range(min=300)
                     ),

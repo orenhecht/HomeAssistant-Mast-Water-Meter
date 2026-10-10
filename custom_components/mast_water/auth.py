@@ -41,6 +41,18 @@ class MastAuthError(Exception):
     """Raised on authentication / OTP failures."""
 
 
+class MastWrongCompanyError(MastAuthError):
+    """OTP was accepted, but the JWT has no meter access under the login company.
+
+    suggested_company_id is the account's company to log in with instead
+    (a new OTP must be sent, since the code is single-use).
+    """
+
+    def __init__(self, message: str, suggested_company_id: str) -> None:
+        super().__init__(message)
+        self.suggested_company_id = suggested_company_id
+
+
 class MastNetworkError(Exception):
     """Raised on network/connectivity/timeout failures."""
 
@@ -132,22 +144,89 @@ async def send_login_otp(phone: str, company_id: str = "7") -> str:
     return body.get("securedPhone", phone)
 
 
-def _pick_api_company_id(companies: list, auth_company_id: str) -> str:
-    """Pick the data-API company ID from the userCompanies list.
+async def fetch_companies() -> list[dict[str, str]]:
+    """Fetch the public MAST organization list for the setup dropdown.
 
-    The auth company (e.g. "7", the water utility) is the correct one for data API
-    calls.  We prefer it when it appears as valid/active in the company list.
-    Other companies (e.g. regional councils) should not be used for meter data.
+    Returns [{"value": company_id, "label": ...}] where the label is the
+    organization name, its ID and up to a few of the towns it serves.
+    Water corporations (which own the meters) come first, then the rest,
+    each alphabetically.  Test organizations are left out.
+    Raises MastNetworkError on failure.
+    """
+    url = f"{API_BASE_URL}/Cities/GetCities"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=_mast_headers(), timeout=_TIMEOUT) as r:
+                if r.status != 200:
+                    raise MastNetworkError(f"GetCities returned status {r.status}")
+                data = await r.json(content_type=None)
+    except (TimeoutError, aiohttp.ClientError, ValueError) as err:
+        raise MastNetworkError(f"Network error fetching company list: {err}") from err
+
+    towns: dict[int, list[str]] = {}
+    for city in data.get("taagidRashutList") or []:
+        for cid in {city.get("taagidId"), city.get("rashutId")} - {None}:
+            towns.setdefault(cid, []).append(city.get("name", "").strip())
+
+    options = []
+    for c in data.get("companyDetailsMediaList") or []:
+        cid = c.get("companyId")
+        name = (c.get("name") or "").strip() or ((c.get("nameTranslation") or {}).get("en") or "").strip()
+        if cid is None or not name or re.search(r"בדיקות|test", name, re.IGNORECASE):
+            continue
+        served = [t for t in towns.get(cid, []) if t and t not in name]
+        label = f"{name} ({cid})"
+        if served:
+            label += " — " + ", ".join(served[:4]) + ("…" if len(served) > 4 else "")
+        options.append((c.get("typeId") != 1, label, {"value": str(cid), "label": label}))
+    return [opt for *_, opt in sorted(options, key=lambda o: o[:2])]
+
+
+def _candidate_company_ids(companies: list, auth_company_id: str) -> list[str]:
+    """Order company IDs to try for data API calls.
+
+    The auth company comes first (it is the water utility for most users), then
+    valid/active companies from userCompanies, then any remaining ones.
     """
     valid = [
-        c for c in companies
-        if c.get("validAsset") and c.get("isActiveCompany")
-    ] or companies  # fall back to all if filter leaves nothing
+        str(c.get("companyId")) for c in companies
+        if c.get("companyId") is not None and c.get("validAsset") and c.get("isActiveCompany")
+    ]
+    others = [str(c.get("companyId")) for c in companies if c.get("companyId") is not None]
+    ordered: list[str] = []
+    for cid in [str(auth_company_id), *valid, *others]:
+        if cid not in ordered:
+            ordered.append(cid)
+    return ordered
 
-    auth_match = [c for c in valid if str(c.get("companyId", "")) == str(auth_company_id)]
-    if auth_match:
-        return auth_company_id
-    return str(valid[0].get("companyId", auth_company_id))
+
+async def _probe_data_api(token: str, company_id: str) -> str | None:
+    """Check that the JWT can read meter data with the given X-CompanyId.
+
+    Uses a fresh session (no cookies from the login session), matching how the
+    coordinator later calls the API.  Returns the (possibly server-renewed) token
+    on success, None on 401/403.
+    """
+    async with aiohttp.ClientSession() as session:
+        for path in ("PersonalAreaAsset/ValidateUserAssets", "WaterMeter/GetWaterMeterCards"):
+            headers = {**_mast_headers(), "jwt": f"Bearer {token}", "X-CompanyId": company_id}
+            try:
+                async with session.get(f"{API_BASE_URL}/{path}", headers=headers, timeout=_TIMEOUT) as r:
+                    body = await r.text()
+                    _LOGGER.debug(
+                        "[AUTH] probe companyId=%s %s → status=%d body=%s",
+                        company_id, path, r.status, body[:300],
+                    )
+                    new_token = r.headers.get("new-token", "").removeprefix("Bearer ").strip()
+                    if r.status in (401, 403):
+                        return None
+                    if r.status != 200:
+                        raise MastNetworkError(f"{path} returned status {r.status}: {body[:200]}")
+                    if new_token:
+                        token = new_token
+            except (TimeoutError, aiohttp.ClientError) as err:
+                raise MastNetworkError(f"Network error probing {path}: {err}") from err
+    return token
 
 
 async def _validate_otp_once(
@@ -203,46 +282,50 @@ async def validate_login_otp(
     - jwt_token: JWT without 'Bearer ' prefix, scoped to api_company_id
     - api_company_id: the company ID to use in X-CompanyId for data API calls
 
-    When api_company_id is supplied (re-auth case): validates directly with
-    api_company_id so the resulting JWT is scoped to the data-API company.
-
-    When api_company_id is not supplied (initial setup): validates first with
-    company_id to discover the correct api_company_id from userCompanies, then
-    validates a second time with api_company_id to obtain a properly-scoped JWT.
-    If the second validation fails (e.g. OTP is single-use), falls back to the
-    first JWT with a warning.
+    The OTP is validated once (it is single-use) with company_id.  The resulting
+    JWT is then probed against the data API with each candidate X-CompanyId
+    (stored api_company_id first, then the auth company, then the companies in
+    userCompanies) and the first one that can read meter data is returned.
 
     Creates its own aiohttp session to avoid HA's SSRF middleware.
-    Raises MastAuthError on wrong OTP, MastNetworkError on connectivity issues.
+    Raises MastAuthError on wrong OTP or when no company grants meter access,
+    MastNetworkError on connectivity issues.
     """
     async with aiohttp.ClientSession() as session:
-        # Always validate with the auth company first — it is the water utility and
-        # the correct company for data API calls.  Do NOT validate with api_company_id
-        # directly (regional councils, etc. return 401 for meter endpoints).
         token, body = await _validate_otp_once(session, phone, otp_code, company_id)
-        companies = body.get("user", {}).get("userCompanies", [])
-        result_api_company_id = _pick_api_company_id(companies, auth_company_id=company_id)
+    companies = body.get("user", {}).get("userCompanies", [])
+    _LOGGER.info(
+        "[AUTH] OTP accepted; userCompanies=%s",
+        [
+            {k: c.get(k) for k in ("companyId", "companyName", "validAsset", "isActiveCompany")}
+            for c in companies
+        ],
+    )
 
-        if result_api_company_id != company_id:
-            # Unexpected: the picker chose a different company.  Try two-step OTP
-            # in case the data API truly needs a different scope; if it fails
-            # (OTP is single-use), fall back to the auth-company JWT and use
-            # company_id for data API calls.
-            _LOGGER.debug(
-                "[AUTH] Discovered api_company_id=%s; re-validating OTP with that company",
-                result_api_company_id,
-            )
-            try:
-                token, body = await _validate_otp_once(session, phone, otp_code, result_api_company_id)
-                _LOGGER.debug("[AUTH] Two-step OTP validation succeeded")
-            except MastAuthError as err:
-                _LOGGER.warning(
-                    "[AUTH] Two-step OTP re-validation failed (%s) — "
-                    "falling back to JWT from companyId=%s",
-                    err,
-                    company_id,
-                )
-                result_api_company_id = company_id
+    candidates = _candidate_company_ids(companies, auth_company_id=company_id)
+    if api_company_id and api_company_id in candidates:
+        candidates.remove(api_company_id)
+    if api_company_id:
+        candidates.insert(0, api_company_id)
+
+    result_api_company_id = None
+    for cid in candidates:
+        probed = await _probe_data_api(token, cid)
+        if probed:
+            token, result_api_company_id = probed, cid
+            break
+
+    if result_api_company_id is None:
+        message = (
+            f"OTP accepted but the token cannot read meter data for any company "
+            f"(tried X-CompanyId {', '.join(candidates)})"
+        )
+        # The JWT may be scoped to the login company.  If the account belongs to
+        # a different company, the caller must log in again with that one.
+        other = [cid for cid in _candidate_company_ids(companies, company_id) if cid != str(company_id)]
+        if other:
+            raise MastWrongCompanyError(message, suggested_company_id=other[0])
+        raise MastAuthError(message)
 
     _LOGGER.debug(
         "[AUTH] JWT ready — len=%d payload_start=%s... api_company_id=%s",
